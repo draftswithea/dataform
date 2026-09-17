@@ -1,6 +1,6 @@
-!["Banner Image"](/public/banner.png)
+<img src="./public/logo.png" alt="Demo" width="100" height="100" />
 
-# frmz
+# `frmz` - FormData Builder
 
 A schema-aware reactive FormData builder with Zod validation and full Blob/File support. Manage form state, validate data, and generate submission-ready FormData with a reactive proxy.
 
@@ -100,7 +100,7 @@ const { data, getFormData } = frmz(
     tags: ["developer"],
     avatar: someFile, // Optional blob
   },
-  userSchema // Custom schema override
+  userSchema, // Custom schema override
 );
 ```
 
@@ -195,7 +195,7 @@ The library throws Zod validation errors when provided data doesn't match the sc
 try {
   const manager = frmz(
     { email: "invalid-email" },
-    z.object({ email: z.string().email() })
+    z.object({ email: z.string().email() }),
   );
 } catch (error) {
   console.error("Validation failed:", error.errors);
