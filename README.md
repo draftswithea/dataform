@@ -1,276 +1,386 @@
-<img src="./public/logo.png" alt="Demo" width="100" height="100" />
+<img
+  src="https://raw.githubusercontent.com/draftswithea/draftswithea/main/assets/draftswithea-indicator.png"
+  alt="dataform"
+  style="display: block; margin: 0 auto;"
+  width="300"
+/>
 
-# `frmz` - FormData Builder
+**Dataform** keeps your form's data in one object, lets you edit it like any normal JavaScript object, and turns it into `FormData` when you're ready to submit. It handles files and images, can optionally validate with Zod, and can save drafts in the browser so they survive a page refresh.
 
-A schema-aware reactive FormData builder with Zod validation and full Blob/File support. Manage form state, validate data, and generate submission-ready FormData with a reactive proxy.
+Start with the basics below. Each section adds one capability, so you only need to read as far as your project requires.
 
-## Features
+## Contents
 
-- ✅ **Automatic Schema Inference**: Derive Zod schemas from your data structures
-- ✅ **Manual Schema Validation**: Use custom Zod schemas for precise control
-- ✅ **Reactive Data Proxy**: Live updates with deep object reactivity
-- ✅ **Blob & File Support**: Perfect for file uploads and image handling
-- ✅ **TypeScript First**: Full type safety and intelligent inference
-- ✅ **FormData Generation**: Create fetch-ready FormData objects automatically
+1. [Install](#1-install)
+2. [Your first form](#2-your-first-form)
+3. [Submitting with FormData](#3-submitting-with-formdata)
+4. [Uploading files and images](#4-uploading-files-and-images)
+5. [Listening for changes](#5-listening-for-changes)
+6. [Validating with Zod](#6-validating-with-zod)
+7. [Saving drafts](#7-saving-drafts)
+8. [Cleaning up](#8-cleaning-up)
+9. [Managing stored drafts](#9-managing-stored-drafts)
+10. [API reference](#10-api-reference)
+11. [Limitations](#11-limitations)
 
-## Installation
+---
 
-Copy the `src/index.ts` into your project if you don't want to add additional dependencies to your project or
+## 1. Install
 
 ```bash
-npm install frmz zod
-
-pnpm add frmz zod
+npm install @draftswithea/dataform zod
 ```
 
-Note: Zod is a peer dependency and must be installed separately.
+```bash
+pnpm add @draftswithea/dataform zod
+```
 
-## Basic Usage
+Zod is a peer dependency. You only need it for validation (section 6), but TypeScript also uses its types, so install it either way.
+
+Alternatively, you can copy `src/index.ts` into your project and skip the package.
+
+---
+
+## 2. Your first form
+
+Pass in your starting data, and you get back an object called `data`:
 
 ```ts
-import { frmz } from "frmz";
+import { dataform } from "@draftswithea/dataform";
 
-// Create a form manager with automatic schema inference
-const { data, getFormData } = frmz({
-  user: {
-    name: "Alice",
-    email: "alice@example.com",
-    age: 30,
-  },
-  preferences: {
-    newsletter: true,
-    tags: ["tech", "programming"],
-  },
+const form = dataform({
+  name: "Alice",
+  email: "alice@example.com",
+  age: 30,
 });
 
-// Update values reactively
-data.user.name = "Bob"; // Changes are tracked
-data.preferences.tags.push("javascript");
-
-// Generate FormData for submission
-const formData = getFormData();
-// formData contains: user[name]=Bob, user[email]=alice@example.com, etc.
+form.data.name = "Bob";
+console.log(form.data.name); // "Bob"
 ```
 
-## File Upload Example
+`data` behaves like a normal object. Assigning to it updates the form, and nested values work the same way:
 
 ```ts
-// Handle file inputs with full type safety
-document.getElementById("avatar").addEventListener("change", (e) => {
-  const file = e.target.files[0];
-
-  const { data, getFormData } = frmz({
-    profile: {
-      name: "John Doe",
-      avatar: file, // File object handled properly
-      documents: [file], // Works in arrays too
-      metadata: {
-        uploadDate: new Date().toISOString(),
-      },
-    },
-  });
-
-  // Submit to server
-  fetch("/api/upload", {
-    method: "POST",
-    body: getFormData(), // Contains the file properly
-  });
+const form = dataform({
+  user: { name: "Alice", settings: { darkMode: true } },
+  tags: ["tech"],
 });
+
+form.data.user.settings.darkMode = false;
+form.data.tags.push("javascript");
 ```
 
-## Advanced Schema Validation
+> **Note:** The root must be a plain object or an array. You can't start with a class instance, `Map`, or `Set`.
+
+---
+
+## 3. Submitting with FormData
+
+When you're ready to send the form, call `getFormData()`:
+
+```ts
+const formData = form.getFormData();
+
+await fetch("/api/signup", { method: "POST", body: formData });
+```
+
+Nested fields use bracket notation, which most servers can parse:
+
+| Your data                     | FormData entry                                     |
+| ----------------------------- | -------------------------------------------------- |
+| `{ user: { name: "Alice" } }` | `user[name]=Alice`                                 |
+| `{ tags: ["a", "b"] }`        | `tags[0]=a`, `tags[1]=b`                           |
+| `{ joined: new Date(...) }`   | ISO string, e.g. `joined=2026-11-11T00:00:00.000Z` |
+| `{ nickname: null }`          | `nickname=` (empty string)                         |
+| `{ nickname: undefined }`     | Skipped                                            |
+
+---
+
+## 4. Uploading files and images
+
+`File` and `Blob` values are added to FormData as files, not strings, so you can store them directly:
+
+```ts
+const form = dataform({
+  title: "",
+  avatar: null as File | null,
+  attachments: [] as File[],
+});
+
+avatarInput.addEventListener("change", (event) => {
+  form.data.avatar = event.target.files[0];
+});
+
+attachInput.addEventListener("change", (event) => {
+  form.data.attachments.push(...event.target.files);
+});
+
+// Submitting sends the files as multipart/form-data
+await fetch("/api/upload", { method: "POST", body: form.getFormData() });
+```
+
+Tip: Set `null` as the starting value and type it with `as File | null`, so TypeScript knows the field will hold a file later.
+
+---
+
+## 5. Listening for changes
+
+Use `subscribe` to run code whenever the form changes. This is how you connect dataform to a UI framework or update a preview:
+
+```ts
+const unsubscribe = form.subscribe(() => {
+  preview.textContent = form.data.name;
+});
+
+// Later, when you no longer need updates:
+unsubscribe();
+```
+
+Rapid changes (like pushing 100 items in a loop) are batched, so your listener runs once per tick instead of once per change.
+
+With React, you can connect it to `useSyncExternalStore`:
+
+```ts
+const snapshot = useSyncExternalStore(form.subscribe, () => form.data);
+```
+
+---
+
+## 6. Validating with Zod
+
+Pass a Zod schema as the second argument to check and type your data:
 
 ```ts
 import { z } from "zod";
-import { frmz } from "frmz";
+import { dataform } from "@draftswithea/dataform";
 
-const userSchema = z.object({
+const signupSchema = z.object({
   name: z.string().min(2),
   email: z.string().email(),
-  avatar: z.instanceof(Blob).optional(),
   age: z.number().min(18),
-  tags: z.array(z.string()),
+  avatar: z.instanceof(File).optional(),
 });
 
-const { data, getFormData } = frmz(
-  {
-    name: "Alice",
-    email: "alice@example.com",
-    age: 25,
-    tags: ["developer"],
-    avatar: someFile, // Optional blob
-  },
-  userSchema, // Custom schema override
+const form = dataform(
+  { name: "Alice", email: "alice@example.com", age: 25 },
+  signupSchema,
 );
 ```
 
-## API Reference
+Two things happen when you pass a schema:
 
-### 1. `frmz(initialData)`
+1. The initial data is validated. If it doesn't match, `dataform` throws the Zod error.
+2. `form.data` is typed from the schema, so `form.data.age` is a `number` in your editor.
 
-Creates a form manager with inferred schema.
-
-**Parameters:**
-
-- `initialData`: Object or array to use as initial state
-
-**Returns:**
-
-- `data`: Reactive proxy of the initial data
-- `getFormData()`: FormData: Function that returns current state as FormData
-
-### 2. `frmz(initialData, schema)`
-
-Creates a form manager with custom Zod schema.
-
-**Parameters:**
-
-- `initialData`: Data matching the provided schema
-- `schema`: Zod schema for validation
-
-**Returns:**
-
-- `data`: Reactive proxy of validated data
-- `getFormData()`: FormData: Function that returns current state as FormData
-
-## Reactive Data Pattern
-
-The `data` object is a deep proxy that tracks changes:
+Validation runs when the form is created, and again when a saved draft is restored (section 7). To check the current values before submitting, run the schema yourself:
 
 ```ts
-const { data, getFormData } = frmz({
-  user: { name: "Alice", settings: { darkMode: true } },
-});
+const result = signupSchema.safeParse(form.data);
 
-// All changes are tracked
-data.user.name = "Bob"; // Simple property
-data.user.settings.darkMode = false; // Nested property
-data.user.settings.fontSize = 16; // New properties
-
-// getFormData() captures all current changes
-const formData = getFormData(); // Contains latest state
-```
-
-### FormData Output Format
-
-The generated FormData uses standard encoding:
-
-**Object properties:**
-
-```text
-user[name]=Alice
-user[email]=alice@example.com
-```
-
-**Array elements:**
-
-```text
-tags[0]=tech
-tags[1]=programming
-```
-
-**File uploads:**
-
-```text
-tags[0]=tech
-tags[1]=programming
-```
-
-## Type Utilities
-`DeepWritable<T>`
-Utility type to make deeply nested readonly types writable:
-
-```typescript
-import type { DeepWritable } from "frmz";
-
-type User = DeepWritable<typeof userSchema>;
-// Now all properties are mutable
-```
-
-## Error Handling
-
-The library throws Zod validation errors when provided data doesn't match the schema:
-
-```typescript
-try {
-  const manager = frmz(
-    { email: "invalid-email" },
-    z.object({ email: z.string().email() }),
-  );
-} catch (error) {
-  console.error("Validation failed:", error.errors);
+if (!result.success) {
+  console.log(result.error.issues);
 }
 ```
 
-## Common Use Cases
+---
 
-1. Form State Management
+## 7. Saving drafts
 
-   ```ts
-   const { data, getFormData } = frmz(initialFormState);
+Add `persist` to keep the form's data in IndexedDB. Drafts can include files and images, and they're restored after a page refresh:
 
-   // Bind to input events
-   input.addEventListener("change", (e) => {
-     data.user.name = e.target.value;
-   });
+```ts
+const form = dataform(
+  { name: "", avatar: null as File | null },
+  { persist: true },
+);
 
-   // Submit handler
-   form.addEventListener("submit", async (e) => {
-     e.preventDefault();
-     await fetch("/submit", { body: getFormData() });
-   });
-   ```
+await form.ready; // Wait for any saved draft to load
+```
 
-2. File Upload Forms
+Changes are saved shortly after you make them, and pending changes are saved when the tab is hidden. Persistence failures log a warning and never throw.
 
-   ```ts
-   const { data, getFormData } = frmz({
-     title: "",
-     description: "",
-     attachments: [], // Will hold files
-   });
+### Resuming a draft
 
-   // Add files to array
-   fileInput.addEventListener("change", (e) => {
-     data.attachments.push(...e.target.files);
-   });
-   ```
+Each form gets its own key, so separate forms never overwrite each other. To resume a draft later, store the key somewhere you can read it back, such as the URL, `sessionStorage`, or route state:
 
-3. Configuration Objects
-   ```ts
-   const { data, getFormData } = frmz({
-     settings: {
-       theme: "dark",
-       notifications: true,
-       layout: { grid: true, spacing: 2 },
-     },
-   });
-   ```
+```ts
+const form = dataform(
+  { name: "", avatar: null as File | null },
+  { persist: true },
+);
 
-## Limitations
+sessionStorage.setItem("signup-draft", form.key!);
+```
 
-- Root Types: Only objects and arrays are supported as root values
+Then, on a later visit:
 
-- FormData Encoding: Uses standard multipart/form-data encoding (not JSON)
+```ts
+const key = sessionStorage.getItem("signup-draft") ?? undefined;
 
-- Circular References: Not supported in the data structure
+const form = dataform(
+  { name: "", avatar: null as File | null },
+  { persist: { key } },
+);
 
-- Server Processing: Requires server-side support for bracket notation (e.g.,`user[name]`)
+await form.ready;
+```
 
-##  Browser Support
+If no key is found, `key` is `undefined`, and dataform starts a new draft.
 
-Works in all modern browsers that support:
+### Persistence options
 
-- Proxy API (ES2015)
+```ts
+dataform(initialData, {
+  persist: {
+    key: "my-draft", // Use a specific key (default: a generated UUID)
+    delayMs: 300, // Wait this long after the last change before saving
+    ttlMs: 7 * 24 * 60 * 60 * 1000, // Ignore drafts older than 7 days
+    version: 2, // Ignore drafts saved under an older version
+  },
+});
+```
 
-- FormData API
+Use `version` when your form's shape changes. Increase it, and old drafts are ignored instead of loading the wrong fields.
 
-- Blob/File API
+### Schema and drafts
 
-##  Contributing
+When you use persistence with a schema, every restored draft is validated. If the draft doesn't match the schema, it's discarded and you start from `initialData`.
 
-Found an issue? Want to add a feature? Please open an issue or PR on our GitHub repository.
+### Edits before restore
 
-##  License
+If you change a field before `ready` resolves, your edit wins and the saved draft is not applied. Await `ready` before your first edit if you want the draft to load first.
 
-MIT License - feel free to use in your projects!
+---
+
+## 8. Cleaning up
+
+Two methods handle teardown:
+
+```ts
+// Delete the saved draft (e.g., after a successful submit)
+await form.clear();
+
+// Save any pending changes and stop listening (e.g., when a component unmounts)
+await form.dispose();
+```
+
+In React, call `dispose()` in the effect cleanup:
+
+```ts
+useEffect(() => {
+  const form = dataform(initial, { persist: true });
+  return () => void form.dispose();
+}, []);
+```
+
+---
+
+## 9. Managing stored drafts
+
+Abandoned drafts stay in IndexedDB unless you remove them. Two helpers let you manage them:
+
+```ts
+import { listFormKeys, purgeExpiredForms } from "@draftswithea/dataform";
+
+// Run once when your app starts: delete drafts not updated in 30 days
+await purgeExpiredForms(30 * 24 * 60 * 60 * 1000);
+
+// Get every stored draft key, e.g. to show a "resume draft" list
+const keys = await listFormKeys();
+```
+
+---
+
+## 10. API reference
+
+### `dataform(initialData, options?)`
+
+Creates a form without a schema.
+
+| Parameter     | Type              | Description         |
+| ------------- | ----------------- | ------------------- |
+| `initialData` | `object \| array` | Starting state      |
+| `options`     | `DataformOptions` | Optional, see below |
+
+### `dataform(initialData, schema, options?)`
+
+Creates a form validated by a Zod schema. `data` is typed from the schema.
+
+### Returned object
+
+| Property / method     | Description                                                      |
+| --------------------- | ---------------------------------------------------------------- |
+| `data`                | Reactive state. Edit it like a normal object.                    |
+| `key`                 | Persistence key, or `undefined` if persistence is off            |
+| `ready`               | Promise that resolves once any saved draft has loaded            |
+| `subscribe(listener)` | Calls `listener` after changes. Returns an unsubscribe function. |
+| `getFormData()`       | Returns the current state as `FormData`                          |
+| `clear()`             | Deletes the saved draft                                          |
+| `dispose()`           | Saves pending changes and stops listening                        |
+
+### `DataformOptions`
+
+| Option    | Type                        | Default     | Description                    |
+| --------- | --------------------------- | ----------- | ------------------------------ |
+| `persist` | `boolean \| PersistOptions` | `undefined` | Turns on IndexedDB persistence |
+
+### `PersistOptions`
+
+| Option    | Type     | Default        | Description                                   |
+| --------- | -------- | -------------- | --------------------------------------------- |
+| `key`     | `string` | Generated UUID | Storage key for this form                     |
+| `delayMs` | `number` | `300`          | Wait time after the last change before saving |
+| `ttlMs`   | `number` | Never expires  | Ignore drafts older than this                 |
+| `version` | `number` | `1`            | Ignore drafts saved under a different version |
+
+### Helpers
+
+| Function                      | Description                                  |
+| ----------------------------- | -------------------------------------------- |
+| `listFormKeys()`              | Returns the keys of all stored drafts        |
+| `purgeExpiredForms(maxAgeMs)` | Deletes drafts not updated within `maxAgeMs` |
+
+### Types
+
+| Type              | Description                                                                                          |
+| ----------------- | ---------------------------------------------------------------------------------------------------- |
+| `Dataform<T>`     | The object returned by `dataform`                                                                    |
+| `DataformOptions` | Options for `dataform`                                                                               |
+| `PersistOptions`  | Options for `persist`                                                                                |
+| `DeepWritable<T>` | Removes `readonly` from a type, including nested properties. `Blob` and `Date` are left as they are. |
+
+---
+
+## 11. Limitations
+
+- **Root type:** Must be a plain object or array.
+- **Plain data only:** Class instances, `Map`, and `Set` are not tracked or serialized. `Date` is converted to an ISO string.
+- **Circular references:** Not supported.
+- **Encoding:** FormData uses `multipart/form-data`, not JSON, so your server needs to parse bracket notation (e.g., `user[name]`).
+- **Storage:** Persistence uses IndexedDB, so it requires a browser environment. Server-side rendering needs persistence turned off or guarded.
+
+## Browser support
+
+Works in modern browsers that support:
+
+- Proxy (ES2015)
+- FormData and Blob/File
+- IndexedDB (for persistence only)
+- `structuredClone`
+
+## Migrating from `frmz`
+
+| Before                                    | After                                                                   |
+| ----------------------------------------- | ----------------------------------------------------------------------- |
+| `import { frmz } from "frmz"`             | `import { dataform } from "@draftswithea/dataform"`                     |
+| `const { data, getFormData } = frmz(...)` | `const form = dataform(...)`, then `form.data` and `form.getFormData()` |
+| Schema inferred automatically             | Schema is optional. Pass one to validate.                               |
+| No persistence                            | `{ persist: true }`                                                     |
+
+## Contributing
+
+Found an issue or want to add a feature? Open an issue or pull request on the GitHub repository.
+
+## License
+
+[MIT LICENSE](./LICENSE.md)

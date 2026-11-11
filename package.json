@@ -1,6 +1,6 @@
 {
-  "name": "frmz",
-  "version": "0.0.111",
+  "name": "@draftswithea/dataform",
+  "version": "0.0.1",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
@@ -8,6 +8,7 @@
     "package.json",
     "README.md"
   ],
+  "type": "module",
   "scripts": {
     "dev": "npx tsc -w",
     "build": "npx tsc",
@@ -32,7 +33,7 @@
     "zod": "^3.0.0"
   },
   "repository": {
-    "url": "https://github.com/techwithmanuel/frmz"
+    "url": "https://github.com/techwithmanuel/dataform"
   },
   "devDependencies": {
     "typescript": "^5.8.3",
